@@ -1,30 +1,154 @@
 ---
-title: "World Air Quality"
-author: "Cristina Racovita"
-date: "2024-10-22"
-output: html_document
+title: "Air Quality Index Snapshot"
+author: "Cristina Racoviță"
+output:
+  html_document:
+    toc: true
+  pdf_document:
+    toc: true
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(mice)
+library(lmtest)
+library(knitr)
+library(tidyr)
+library(kableExtra)
 ```
 
-## R Markdown
+<!-- I should describe the problem (regression vs classification) -->
+The data set called [World Air Quality Index by City and Coordinates](https://www.kaggle.com/datasets/adityaramachandran27/world-air-quality-index-by-city-and-coordinates/data) aims to provide valuable insights about the air quality of different regions. The goal of my project is <u>to classify</u> the air quality of a given city (*Good*, *Moderate*, etc.). This is predicted using the **country and city name, carbon monoxide, ozone, PM2.5 and nitrogen value**. The data set is described in the first section.
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+## Data Analysis
+<!-- quality checks, check for outlines -->
+Firstly, the data set needs to be loaded from the **csv** file.   
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+```{r load_dataset, message=FALSE, warning=FALSE, results='hide'}
+dataset <- read_delim(file = "./air-quality-countries.csv",
+                            delim = ",",
+                            col_names = TRUE)
 ```
 
-## Including Plots
+```{r head_dataset}
+kable(dataset[1:5,])
+```
+The data set has **`r ncol(dataset)`** columns and **`r nrow(dataset)`** rows. The features are `r colnames(dataset)`, and they are described as follows:  
 
-You can also embed plots, for example:
+- **`r colnames(dataset)[1]`**: Country Name
+- **`r colnames(dataset)[2]`**: City Name
+- **`r colnames(dataset)[3]`/`r colnames(dataset)[4]`**: Air Quality Index
+- **`r colnames(dataset)[5]`/`r colnames(dataset)[6]`**: Carbon Monoxide (CO) is a colorless, odorless gas that is produced by the incomplete burning of fossil fuels. High levels of CO can be toxic to humans and can cause headaches, dizziness, and nausea.
+- **`r colnames(dataset)[7]`/`r colnames(dataset)[8]`**: Ozone is a gas that can form in the atmosphere through a chemical reaction between sunlight and other pollutants. High levels of ozone can be harmful to human health, particularly for those with respiratory issues.
+- **`r colnames(dataset)[9]`/`r colnames(dataset)[10]`**: Nitrogen Dioxide (NO₂) is a gas that forms in the atmosphere from the combustion of fossil fuels, mainly from vehicles and industrial activities. Elevated levels of NO₂ can be harmful to human health, particularly for individuals with respiratory conditions, as it can irritate the airways and worsen lung diseases like asthma.
+- **`r colnames(dataset)[11]`/`r colnames(dataset)[12]`**: PM2.5 refers to tiny particles or droplets in the air that are 2.5 micrometers or less in width. They can be harmful to human health when inhaled, especially in high concentrations.
+- **`r colnames(dataset)[13]`**: Region Latitude
+- **`r colnames(dataset)[14]`**: Region Longitude
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+For the above mentioned goal, the target column will be *AQI Category*; therefore, **during the data cleaning, the feature AQI Value should be removed**. This approach encourages the model to focus on other relevant features that contribute to air quality classifications, enhancing its ability to generalize and make accurate predictions based on patterns in the data rather than relying on direct mappings or redundant information.
+
+It's time to convert the appropriate columns into categorical variables using the factor method, as the dataset currently treats all columns as continuous features.
+
+``` {r cast_columns}
+dataset <- dataset %>%
+  mutate(Country = factor(Country)) %>%
+  mutate(City = factor(City)) %>%
+  mutate(`AQI Category` = factor(`AQI Category`)) %>%
+  mutate(`CO AQI Category` = factor(`CO AQI Category`)) %>%
+  mutate(`Ozone AQI Category` = factor(`Ozone AQI Category`)) %>%
+  mutate(`NO2 AQI Category` = factor(`NO2 AQI Category`)) %>%
+  mutate(`PM2.5 AQI Category` = factor(`PM2.5 AQI Category`))
+
+categorical_variables <- dataset %>%
+                          select(where(is.factor))
+
+continuous_variables <- dataset %>%
+                          select(where(is.double))
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+Finally, there are `r ncol(continuous_variables)` continuous variables: `r names(continuous_variables)`, and `r ncol(categorical_variables)` categorical variables: `r names(categorical_variables)`.
+
+Let’s take a closer look at our data to explore the number of countries, cities, and categories present in the dataset. Since the *AQI Category* is the target column, we will also focus on the percentage distribution of its classes. In addition, we can compute the minimum, maximum, mean and the standard deviation for each continuous feature.
+
+```{r analyse_categorical_data}
+distinct_values_list <- data.frame(Column = character(), Distinct_Values = character(), stringsAsFactors = FALSE)
+
+for (col in colnames(categorical_variables)) {
+  if(col == 'Country' || col == 'City') {
+    next
+  }
+  
+  distinct_values <- paste(levels(categorical_variables[[col]]), collapse = ", ")
+  distinct_values_list <- rbind(distinct_values_list, data.frame(Column = col,
+                                         Distinct_Values = distinct_values, stringsAsFactors = FALSE))
+}
+
+kable(distinct_values_list, caption = "Distinct Values for Each AQI Categorical Variable")
+
+countries <- levels(dataset$Country)
+cities <- levels(dataset$City)
+
+most_common_country <- dataset %>%
+  filter(!is.na(Country)) %>%
+  count(Country) %>%                     
+  arrange(desc(n)) %>%                   
+  slice(1) %>%                           
+  mutate(percentage = round(n / sum(!is.na(dataset$Country)) * 100, 3))
+
+most_common_city <- dataset %>%
+  filter(!is.na(City)) %>%
+  count(City) %>%                     
+  arrange(desc(n)) %>%                   
+  slice(1) %>%                           
+  mutate(percentage = round(n / sum(!is.na(dataset$City == City)) * 100, 3))
+
+aqi_percentage <- dataset %>%
+  count(`AQI Category`) %>%                               
+  mutate(percentage = round(n / sum(n) * 100, 3)) %>%     
+  arrange(desc(percentage))
+
+kable(aqi_percentage)
+```
+
+The percentages for categories outside of *Good* and *Moderate* are significantly low, suggesting that it would be beneficial during the data cleaning process to combine these categories into a single one labeled *Bad*. In terms of the other categorical features, the data set includes information about `r length(countries)` countries and `r length(cities)` cities. The most frequently occurring country is the `r most_common_country['Country']`, which represents `r most_common_country['percentage']`% of the rows, while the most common city is `r most_common_city['City']`, accounting for `r most_common_city['percentage']`% of the rows.
+
+```{r analyse_continuous_data}
+min_continuous_variables <- sapply(continuous_variables, min, na.rm = TRUE)
+mean_continuous_variables <- sapply(continuous_variables, mean, na.rm = TRUE)
+max_continuous_variables <- sapply(continuous_variables, max, na.rm = TRUE)
+sd_continuous_variables <- sapply(continuous_variables, sd, na.rm = TRUE)
+
+stats <- data.frame(
+  min = min_continuous_variables,
+  mean = mean_continuous_variables,
+  max = max_continuous_variables,
+  std = sd_continuous_variables
+)
+kable(stats)
+```
+**Observations**: The *PM2.5 AQI* Value has the highest mean, while the *CO AQI Value* has the lowest.
+
+## Data Visualization
+<!-- data visualization, plots (correlation/ heat map) -->
+The next interesting concept to examine the outlines for each continuous feature. This can be done by filtering all the values that are outside of the range [mean +/- 3 * std](https://en.wikipedia.org/wiki/68%E2%80%9395%E2%80%9399.7_rule).
+
+```{r find_outlines}
+
+
+```
+
+## Data Cleaning
+<!--  missing data imputation -->
+
+## Feature Selection
+
+## Modeling 
+<!-- training, testing, optimization, validation -->
+
+## Final Model
+
+## Conclusion
