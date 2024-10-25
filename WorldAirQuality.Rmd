@@ -19,6 +19,7 @@ library(lmtest)
 library(knitr)
 library(tidyr)
 library(kableExtra)
+library(countrycode)
 ```
 
 <!-- I should describe the problem (regression vs classification) -->
@@ -26,7 +27,7 @@ The data set called [World Air Quality Index by City and Coordinates](https://ww
 
 ## Data Analysis
 <!-- quality checks, check for outlines -->
-Firstly, the data set needs to be loaded from the **csv** file.   
+Firstly, the data set needs to be loaded from the **csv** file.
 
 ```{r load_dataset, message=FALSE, warning=FALSE, results='hide'}
 dataset <- read_delim(file = "./air-quality-countries.csv",
@@ -72,7 +73,9 @@ continuous_variables <- dataset %>%
 
 Finally, there are `r ncol(continuous_variables)` continuous variables: `r names(continuous_variables)`, and `r ncol(categorical_variables)` categorical variables: `r names(categorical_variables)`.
 
-Let’s take a closer look at our data to explore the number of countries, cities, and categories present in the dataset. Since the *AQI Category* is the target column, we will also focus on the percentage distribution of its classes. In addition, we can compute the minimum, maximum, mean and the standard deviation for each continuous feature.
+Let’s take a closer look at our data to explore the number of countries, cities, and categories present in the dataset. Since the *AQI Category* is the target column, we will also focus on the percentage distribution of its classes. In addition, we can compute the minimum, maximum, median, mean and the standard deviation for each continuous feature.
+
+### Categorical Features
 
 ```{r analyse_categorical_data}
 distinct_values_list <- data.frame(Column = character(), Distinct_Values = character(), stringsAsFactors = FALSE)
@@ -116,33 +119,187 @@ kable(aqi_percentage)
 
 The percentages for categories outside of *Good* and *Moderate* are significantly low, suggesting that it would be beneficial during the data cleaning process to combine these categories into a single one labeled *Bad*. In terms of the other categorical features, the data set includes information about `r length(countries)` countries and `r length(cities)` cities. The most frequently occurring country is the `r most_common_country['Country']`, which represents `r most_common_country['percentage']`% of the rows, while the most common city is `r most_common_city['City']`, accounting for `r most_common_city['percentage']`% of the rows.
 
+**Observations**: In the data cleaning phase, the city field should be removed due to its high degrees of freedom. With `r length(cities)` unique cities, we would need a minimum of `r (length(cities)-1)*15` rows to effectively train a model that could learn from this data—which we currently lack. Removing the city field does not result in any loss of detail, as we already have regional location information, including latitude and longitude.
+
+### Continuous Features
+
 ```{r analyse_continuous_data}
 min_continuous_variables <- sapply(continuous_variables, min, na.rm = TRUE)
 mean_continuous_variables <- sapply(continuous_variables, mean, na.rm = TRUE)
 max_continuous_variables <- sapply(continuous_variables, max, na.rm = TRUE)
 sd_continuous_variables <- sapply(continuous_variables, sd, na.rm = TRUE)
+median_continuous_variables <- sapply(continuous_variables, median, na.rm = TRUE)
 
 stats <- data.frame(
   min = min_continuous_variables,
   mean = mean_continuous_variables,
+  median = median_continuous_variables,
   max = max_continuous_variables,
   std = sd_continuous_variables
 )
 kable(stats)
 ```
-**Observations**: The *PM2.5 AQI* Value has the highest mean, while the *CO AQI Value* has the lowest.
+**Observations**: The *PM2.5 AQI* Value has the highest mean, while the *CO AQI Value* and *NO2 AQI Value* has the lowest.
 
 ## Data Visualization
 <!-- data visualization, plots (correlation/ heat map) -->
-The next interesting concept to examine the outlines for each continuous feature. This can be done by filtering all the values that are outside of the range [mean +/- 3 * std](https://en.wikipedia.org/wiki/68%E2%80%9395%E2%80%9399.7_rule).
 
-```{r find_outlines}
+To simplify visualization, I group the four categories indicating poor air quality into a new category - **Bad**.
+``` {r group_data}
+dataset <- dataset %>%
+  mutate(`Air Quality Index Category` = case_when(
+    `AQI Category` %in% c("Unhealthy for Sensitive Groups", "Unhealthy", "Very Unhealthy", "Hazardous") ~ "Bad",
+    `AQI Category` == "Good" ~ "Good",
+    `AQI Category` == "Moderate" ~ "Moderate"
+  ))
+
+dataset <- dataset %>% mutate(`Air Quality Index Category` = factor(`Air Quality Index Category`))
+```
+
+### Categorical Features
+To illustrate the distribution of categorical features, a bar plot is an excellent choice. I analyze the distribution for the *PM2.5 AQI Category*, *CO AQI Category*, *NO2 AQI Category*, and *Ozone AQI Category* features  in relation to our target column: *AQI Category*.
+
+```{r visualize_categorical_features}
+plot_categorical_feature <- function(feature_name) {
+  ggplot(data = dataset, aes(x = `Air Quality Index Category`, fill = !!rlang::sym(feature_name))) +
+    geom_bar(stat = "count",
+             color = "black",
+             position = position_dodge()) +
+    labs(
+      y = feature_name,
+      title = paste("Bar plot of", feature_name, "w.r.t. overall Air Quality Index")
+    ) +
+    scale_fill_discrete(labels = c(levels(dataset[[feature_name]]))) +
+    scale_x_discrete(labels = c(levels(dataset$`Air Quality Index Category`)))
+}
+
+plot_categorical_feature("PM2.5 AQI Category")
+```
+
+It can be observed that there is a small overlap between the "Good" and "Moderate" categories in the *PM2.5 AQI Category*, while the other categories are well grouped. This indicates that it is easy to discriminate using this feature.
+
+```{r plot_categorical_co}
+plot_categorical_feature("CO AQI Category")
+```
+
+```{r plot_categorical_no2}
+plot_categorical_feature("NO2 AQI Category")
+```
+
+Is is noticeable that when it comes to *CO AQI Category* variable, patterns for prediction are difficult to identify, except for the "Moderate" and "Unhealthy for Sensitive Groups" categories. In the same way, it can be seen that for most of the records, the *NO2 AQI Category* has the "Good" value.
+
+```{r plot_categorical_ozone}
+plot_categorical_feature("Ozone AQI Category")
+```
+
+When examining the *Ozone AQI Category* variable, it becomes clear that identifying predictive patterns is challenging, with the exception of the "Unhealthy", "Very Unhealthy" and "Unhealthy for Sensitive Groups" categories.
+
+### Continuous Features
+An important next step is to examine outliers - values that are outside of the range [mean +/- 3 * std](https://en.wikipedia.org/wiki/68%E2%80%9395%E2%80%9399.7_rule) - and the quartiles for the *PM2.5 AQI Value*, *CO AQI Value*, *NO2 AQI Value*, and *Ozone AQI Value* features. I plot these continuous features with a violin plot combined with a box plot because the first one highlights the distribution of the independent variable, while the second one depicts the outliers and the quartiles.  
+
+```{r visualize_outlines}
+plot_continuous_feature <- function(feature_name) {
+  ggplot(
+    data = dataset,
+    aes(x = `Air Quality Index Category`, y = !!rlang::sym(feature_name), color = `Air Quality Index Category`)
+    
+  ) +
+    geom_violin() + geom_boxplot(width = 0.1) +
+    labs(title = paste("Plot of", feature_name, "for Each AQI Category")) +
+    scale_x_discrete(
+      labels = c(
+        "Good" = "Good Air Quality",
+        "Moderate" = "Moderate Air Quality",
+        "Bad" = "Poor Air Quality"
+      )
+    ) +
+    scale_color_discrete(
+      labels = c(
+        "Good" = "Good Air Quality",
+        "Moderate" = "Moderate Air Quality",
+        "Bad" = "Poor Air Quality"
+      )
+    )
+}
+
+plot_continuous_feature("PM2.5 AQI Value")
+```
+
+The distribution of PM2.5 AQI values varies by air quality category. In the Poor Air Quality category, values are heavily skewed toward higher levels, indicating significantly elevated PM2.5. In contrast, the Good Air Quality distribution is narrower and centered around lower values, suggesting that PM2.5 levels are generally low. Overlap exists between "Good" and "Moderate" categories, indicating some values may not clearly fit either classification.
+
+```{r plot_co}
+plot_continuous_feature("CO AQI Value")
+```
+
+Similarly, CO AQI values also change based on air quality. In the Poor Air Quality category, values are predominantly high, reflecting significantly elevated CO levels. The distributions for Good and Moderate Air Quality are narrower, suggesting lower CO levels. Overlap among the three categories indicates that some CO values may not clearly belong to any specific category.
+
+```{r plot_no2}
+plot_continuous_feature("NO2 AQI Value")
+```
+
+For NO2 AQI values, the distribution in the "Poor Air Quality" category is heavily skewed toward higher levels, indicating significantly elevated NO2. The "Good Air Quality" distribution is narrower and centered around lower levels, while "Moderate Air Quality" falls between the two, showing a wider range of values. Overlap between "Good" and "Moderate," as well as "Moderate" and "Poor," suggests potential ambiguity in categorization for certain NO2 values.
+
+```{r plot_ozone}
+plot_continuous_feature("Ozone AQI Value")
+```
+
+Lastly, Ozone AQI values vary across categories. In "Poor Air Quality," the distribution skews high, indicating elevated Ozone levels, while "Good Air Quality" is narrower and focuses on lower levels. "Moderate Air Quality" falls between the two, with a broader range of values. Overlap between "Good" and "Moderate," as well as "Moderate" and "Poor," suggests instances where air quality may be categorized ambiguously based on specific Ozone values.
+
+## Data Cleaning
+<!--  missing data imputation -->
+It's time to ensure our data is clean for training the model. To achieve this, I will filter the variables as explained in the previous sections and check for any missing values, filling them in if necessary.
+
+### Data Filtering
+
+This is how the dataset looks like after filtering the unnecessary features. After the grouping of AIQ Category, the new target column is named: *Air Quality Index Category*.
+
+```{r filter_data}
+dataset <- dataset %>% select(
+  Country,
+  `CO AQI Value`,
+  `CO AQI Category`,
+  `Ozone AQI Value`,
+  `Ozone AQI Category`,
+  `NO2 AQI Value`,
+  `NO2 AQI Category`,
+  `PM2.5 AQI Value`,
+  `PM2.5 AQI Category`,
+  lat,
+  lng,
+  `Air Quality Index Category`
+)
+kable(dataset[1:5,])
+```
+
+### Missing Data Examination
+
+``` {r get_missing_values}
+total_missing_dataset <- sum(is.na(dataset))
+missing_values <- as.data.frame(md.pattern(dataset, plot = FALSE))
+missing_values <- missing_values %>%
+  rename("total missing values" = "V13")
+t(tail(missing_values, 1))
+```
+
+Unfortunately, the dataset contains `r total_missing_dataset` missing values, so additional steps are required to complete the data. However, since the missing values are limited to the country feature, we can fill them in using the corresponding city values, eliminating the need for any imputation methods.
+
+``` {r fill_contries}
+missing_contries <- dataset %>%
+  filter(is.na(Country)) %>%
+  distinct(City)
+
+geocoded_data <- missing_contries %>%
+  geocode(City, method = "osm")
+geocoded_data
+dataset <- dataset %>%
+  left_join(geocoded_data %>% select(City, Country), by = "City") %>%
+  mutate(Country = ifelse(is.na(Country.x), Country.y, Country.x)) %>%
+  select(-Country.x, -Country.y) 
 
 
 ```
 
-## Data Cleaning
-<!--  missing data imputation -->
+
 
 ## Feature Selection
 
