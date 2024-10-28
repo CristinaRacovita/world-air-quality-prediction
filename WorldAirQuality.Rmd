@@ -18,12 +18,21 @@ library(mice)
 library(lmtest)
 library(knitr)
 library(tidyr)
+library(caret)
 library(kableExtra)
-library(countrycode)
+library(randomForestSRC)
+library(MASS)
+library(infotheo)
 ```
 
 <!-- I should describe the problem (regression vs classification) -->
 The data set called [World Air Quality Index by City and Coordinates](https://www.kaggle.com/datasets/adityaramachandran27/world-air-quality-index-by-city-and-coordinates/data) aims to provide valuable insights about the air quality of different regions. The goal of my project is <u>to classify</u> the air quality of a given city (*Good*, *Moderate*, etc.). This is predicted using the **country and city name, carbon monoxide, ozone, PM2.5 and nitrogen value**. The data set is described in the first section.
+
+## Motivation Behind Model Choice
+
+I chose a **Generalized Linear Model (GLM)** because it offers a good mix of simplicity and performance, making it ideal for this project. Since the target variable is the Air Quality Index Category, which is a classification problem, GLM is a natural fit. It helps understand how various pollutants, such as CO, Ozone, NO₂, and PM2.5, influence air quality in different regions.
+
+Additionally, with a dataset of around 16k rows, GLM handles the data efficiently without needing complex adjustments or tuning like other models. This ensures the analysis remains straightforward while delivering reliable and interpretable predictions.
 
 ## Data Analysis
 <!-- quality checks, check for outlines -->
@@ -65,10 +74,10 @@ dataset <- dataset %>%
   mutate(`PM2.5 AQI Category` = factor(`PM2.5 AQI Category`))
 
 categorical_variables <- dataset %>%
-                          select(where(is.factor))
+                          dplyr::select(where(is.factor))
 
 continuous_variables <- dataset %>%
-                          select(where(is.double))
+                          dplyr::select(where(is.double))
 ```
 
 Finally, there are `r ncol(continuous_variables)` continuous variables: `r names(continuous_variables)`, and `r ncol(categorical_variables)` categorical variables: `r names(categorical_variables)`.
@@ -245,7 +254,7 @@ plot_continuous_feature("Ozone AQI Value")
 
 Lastly, Ozone AQI values vary across categories. In "Poor Air Quality," the distribution skews high, indicating elevated Ozone levels, while "Good Air Quality" is narrower and focuses on lower levels. "Moderate Air Quality" falls between the two, with a broader range of values. Overlap between "Good" and "Moderate," as well as "Moderate" and "Poor," suggests instances where air quality may be categorized ambiguously based on specific Ozone values.
 
-## Data Cleaning
+## Data Cleaning 
 <!--  missing data imputation -->
 It's time to ensure our data is clean for training the model. To achieve this, I will filter the variables as explained in the previous sections and check for any missing values, filling them in if necessary.
 
@@ -254,7 +263,7 @@ It's time to ensure our data is clean for training the model. To achieve this, I
 This is how the dataset looks like after filtering the unnecessary features. After the grouping of AIQ Category, the new target column is named: *Air Quality Index Category*.
 
 ```{r filter_data}
-dataset <- dataset %>% select(
+dataset <- dataset %>% dplyr::select(
   Country,
   `CO AQI Value`,
   `CO AQI Category`,
@@ -281,31 +290,81 @@ missing_values <- missing_values %>%
 t(tail(missing_values, 1))
 ```
 
-Unfortunately, the dataset contains `r total_missing_dataset` missing values, so additional steps are required to complete the data. However, since the missing values are limited to the country feature, we can fill them in using the corresponding city values, eliminating the need for any imputation methods.
+Unfortunately, the dataset contains `r total_missing_dataset` missing values, so additional steps are required to complete the data. However, since the missing values are limited to the country feature, we can fill them in using the corresponding city values, eliminating the need for any imputation methods. Sadly, without a Google Maps API Key (which requires to fill in my banking information) I did not succeed to create a automatic method to fill the missing countries. That is why I chose to drop the rows that have missing values, their number being a negligible one. In addition, I renamed all the columns and eliminate spaces to make the modeling step more straight-forward.  
 
-``` {r fill_contries}
-missing_contries <- dataset %>%
-  filter(is.na(Country)) %>%
-  distinct(City)
-
-geocoded_data <- missing_contries %>%
-  geocode(City, method = "osm")
-geocoded_data
+``` {r drop_countries}
 dataset <- dataset %>%
-  left_join(geocoded_data %>% select(City, Country), by = "City") %>%
-  mutate(Country = ifelse(is.na(Country.x), Country.y, Country.x)) %>%
-  select(-Country.x, -Country.y) 
+  filter(!is.na(Country))
 
+dataset <- dataset %>%
+  rename(CO_AQI_Value = `CO AQI Value`, 
+         CO_AQI_Category = `CO AQI Category`, 
+         Ozone_AQI_Value = `Ozone AQI Value`, 
+         Ozone_AQI_Category = `Ozone AQI Category`, 
+         NO2_AQI_Value = `NO2 AQI Value`, 
+         NO2_AQI_Category = `NO2 AQI Category`, 
+         PM25_AQI_Value = `PM2.5 AQI Value`, 
+         PM25_AQI_Category = `PM2.5 AQI Category`, 
+         Air_Quality_Index_Category = `Air Quality Index Category`)
 
+dataset[1:5,]
 ```
-
-
-
-## Feature Selection
 
 ## Modeling 
 <!-- training, testing, optimization, validation -->
+### Feature Selection
+
+```{r build_stepwise_model}
+set.seed(194)
+
+folds <- createFolds(dataset$Air_Quality_Index_Category, k = 10)
+
+precisions <- c()
+recalls <- c()
+feature_counts <- table(character())
+
+for (fold_index in 1:length(folds)) {
+  test_fold <- as.data.frame(dataset[folds[[fold_index]], ])
+  train_fold <- as.data.frame(dataset[-folds[[fold_index]], ])
+  rf_model <-  rfsrc(Air_Quality_Index_Category ~ ., data = train_fold, importance = TRUE, ntree = 1)
+  
+  importance_scores <- rf_model$importance[, "all"]
+  mean_importance <- mean(importance_scores)
+  selected_features <- names(importance_scores[importance_scores >= mean_importance])
+  
+  fold_features <- table(selected_features)
+  feature_counts <- table(c(names(feature_counts), names(fold_features)))
+  
+  selected_features_string = paste(selected_features, collapse = "+")
+  formula = as.formula(paste("Air_Quality_Index_Category ~", selected_features_string))
+  final_rf_model <- rfsrc(formula, data = train_fold, ntree = 1)
+  
+  predictions = predict(final_rf_model, test_fold)
+  confusion_matrix <- confusionMatrix(factor(predictions$class), factor(test_fold$Air_Quality_Index_Category))
+  precisions <- append(precisions, confusion_matrix$byClass[,"Pos Pred Value"])
+  recalls <- append(recalls, confusion_matrix$byClass[,"Sensitivity"])
+}
+
+mean_precision <- mean(precisions, na.rm = TRUE)
+mean_recall <- mean(recalls, na.rm = TRUE)
+f1_score <- 2 * (mean_precision * mean_recall) / (mean_precision + mean_recall)
+sorted_features <- sort(feature_counts, decreasing = TRUE)
+
+print(paste("F1 Score:", f1_score))
+print(sorted_features)
+
+# mutual_information <- infotheo::mutinformation(dataset$Air_Quality_Index_Category, dataset$PM25_AQI_Category)
+# mutual_information
+```
+### Tunning
+
+```{r tunning}
+
+```
+
+### Validation
+
+
 
 ## Final Model
 
-## Conclusion

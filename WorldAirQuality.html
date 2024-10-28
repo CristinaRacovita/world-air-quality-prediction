@@ -356,6 +356,8 @@ display: none;
 
 <div id="TOC">
 <ul>
+<li><a href="#motivation-behind-model-choice" id="toc-motivation-behind-model-choice">Motivation Behind Model
+Choice</a></li>
 <li><a href="#data-analysis" id="toc-data-analysis">Data Analysis</a>
 <ul>
 <li><a href="#categorical-features" id="toc-categorical-features">Categorical Features</a></li>
@@ -373,11 +375,14 @@ Visualization</a>
 Filtering</a></li>
 <li><a href="#missing-data-examination" id="toc-missing-data-examination">Missing Data Examination</a></li>
 </ul></li>
+<li><a href="#modeling" id="toc-modeling">Modeling</a>
+<ul>
 <li><a href="#feature-selection" id="toc-feature-selection">Feature
 Selection</a></li>
-<li><a href="#modeling" id="toc-modeling">Modeling</a></li>
+<li><a href="#tunning" id="toc-tunning">Tunning</a></li>
+<li><a href="#validation" id="toc-validation">Validation</a></li>
+</ul></li>
 <li><a href="#final-model" id="toc-final-model">Final Model</a></li>
-<li><a href="#conclusion" id="toc-conclusion">Conclusion</a></li>
 </ul>
 </div>
 
@@ -390,6 +395,19 @@ project is <u>to classify</u> the air quality of a given city
 <strong>country and city name, carbon monoxide, ozone, PM2.5 and
 nitrogen value</strong>. The data set is described in the first
 section.</p>
+<div id="motivation-behind-model-choice" class="section level2">
+<h2>Motivation Behind Model Choice</h2>
+<p>I chose a <strong>Generalized Linear Model (GLM)</strong> because it
+offers a good mix of simplicity and performance, making it ideal for
+this project. Since the target variable is the Air Quality Index
+Category, which is a classification problem, GLM is a natural fit. It
+helps understand how various pollutants, such as CO, Ozone, NO₂, and
+PM2.5, influence air quality in different regions.</p>
+<p>Additionally, with a dataset of around 16k rows, GLM handles the data
+efficiently without needing complex adjustments or tuning like other
+models. This ensures the analysis remains straightforward while
+delivering reliable and interpretable predictions.</p>
+</div>
 <div id="data-analysis" class="section level2">
 <h2>Data Analysis</h2>
 <!-- quality checks, check for outlines -->
@@ -567,10 +585,10 @@ columns as continuous features.</p>
   mutate(`PM2.5 AQI Category` = factor(`PM2.5 AQI Category`))
 
 categorical_variables &lt;- dataset %&gt;%
-                          select(where(is.factor))
+                          dplyr::select(where(is.factor))
 
 continuous_variables &lt;- dataset %&gt;%
-                          select(where(is.double))</code></pre>
+                          dplyr::select(where(is.double))</code></pre>
 <p>Finally, there are 7 continuous variables: AQI Value, CO AQI Value,
 Ozone AQI Value, NO2 AQI Value, PM2.5 AQI Value, lat, lng, and 7
 categorical variables: Country, City, AQI Category, CO AQI Category,
@@ -943,7 +961,7 @@ necessary.</p>
 <p>This is how the dataset looks like after filtering the unnecessary
 features. After the grouping of AIQ Category, the new target column is
 named: <em>Air Quality Index Category</em>.</p>
-<pre class="r"><code>dataset &lt;- dataset %&gt;% select(
+<pre class="r"><code>dataset &lt;- dataset %&gt;% dplyr::select(
   Country,
   `CO AQI Value`,
   `CO AQI Category`,
@@ -1088,21 +1106,100 @@ t(tail(missing_values, 1))</code></pre>
 steps are required to complete the data. However, since the missing
 values are limited to the country feature, we can fill them in using the
 corresponding city values, eliminating the need for any imputation
-methods.</p>
+methods. Sadly, without a Google Maps API Key (which requires to fill in
+my banking information) I did not succeed to create a automatic method
+to fill the missing countries. That is why I chose to drop the rows that
+have missing values, their number being a negligible one. In addition, I
+renamed all the columns and eliminate spaces to make the modeling step
+more straight-forward.</p>
+<pre class="r"><code>dataset &lt;- dataset %&gt;%
+  filter(!is.na(Country))
+
+dataset &lt;- dataset %&gt;%
+  rename(CO_AQI_Value = `CO AQI Value`, 
+         CO_AQI_Category = `CO AQI Category`, 
+         Ozone_AQI_Value = `Ozone AQI Value`, 
+         Ozone_AQI_Category = `Ozone AQI Category`, 
+         NO2_AQI_Value = `NO2 AQI Value`, 
+         NO2_AQI_Category = `NO2 AQI Category`, 
+         PM25_AQI_Value = `PM2.5 AQI Value`, 
+         PM25_AQI_Category = `PM2.5 AQI Category`, 
+         Air_Quality_Index_Category = `Air Quality Index Category`)
+
+dataset[1:5,]</code></pre>
+<pre><code>## # A tibble: 5 × 12
+##   Country        CO_AQI_Value CO_AQI_Category Ozone_AQI_Value Ozone_AQI_Category
+##   &lt;fct&gt;                 &lt;dbl&gt; &lt;fct&gt;                     &lt;dbl&gt; &lt;fct&gt;             
+## 1 Russian Feder…            1 Good                         36 Good              
+## 2 Brazil                    1 Good                          5 Good              
+## 3 Brazil                    1 Good                          5 Good              
+## 4 Italy                     1 Good                         39 Good              
+## 5 Poland                    1 Good                         34 Good              
+## # ℹ 7 more variables: NO2_AQI_Value &lt;dbl&gt;, NO2_AQI_Category &lt;fct&gt;,
+## #   PM25_AQI_Value &lt;dbl&gt;, PM25_AQI_Category &lt;fct&gt;, lat &lt;dbl&gt;, lng &lt;dbl&gt;,
+## #   Air_Quality_Index_Category &lt;fct&gt;</code></pre>
 </div>
-</div>
-<div id="feature-selection" class="section level2">
-<h2>Feature Selection</h2>
 </div>
 <div id="modeling" class="section level2">
 <h2>Modeling</h2>
 <!-- training, testing, optimization, validation -->
+<div id="feature-selection" class="section level3">
+<h3>Feature Selection</h3>
+<pre class="r"><code>set.seed(194)
+
+folds &lt;- createFolds(dataset$Air_Quality_Index_Category, k = 10)
+
+precisions &lt;- c()
+recalls &lt;- c()
+feature_counts &lt;- table(character())
+
+for (fold_index in 1:length(folds)) {
+  test_fold &lt;- as.data.frame(dataset[folds[[fold_index]], ])
+  train_fold &lt;- as.data.frame(dataset[-folds[[fold_index]], ])
+  rf_model &lt;-  rfsrc(Air_Quality_Index_Category ~ ., data = train_fold, importance = TRUE, ntree = 1)
+  
+  importance_scores &lt;- rf_model$importance[, &quot;all&quot;]
+  mean_importance &lt;- mean(importance_scores)
+  selected_features &lt;- names(importance_scores[importance_scores &gt;= mean_importance])
+  
+  fold_features &lt;- table(selected_features)
+  feature_counts &lt;- table(c(names(feature_counts), names(fold_features)))
+  
+  selected_features_string = paste(selected_features, collapse = &quot;+&quot;)
+  formula = as.formula(paste(&quot;Air_Quality_Index_Category ~&quot;, selected_features_string))
+  final_rf_model &lt;- rfsrc(formula, data = train_fold, ntree = 1)
+  
+  predictions = predict(final_rf_model, test_fold)
+  confusion_matrix &lt;- confusionMatrix(factor(predictions$class), factor(test_fold$Air_Quality_Index_Category))
+  precisions &lt;- append(precisions, confusion_matrix$byClass[,&quot;Pos Pred Value&quot;])
+  recalls &lt;- append(recalls, confusion_matrix$byClass[,&quot;Sensitivity&quot;])
+}
+
+mean_precision &lt;- mean(precisions, na.rm = TRUE)
+mean_recall &lt;- mean(recalls, na.rm = TRUE)
+f1_score &lt;- 2 * (mean_precision * mean_recall) / (mean_precision + mean_recall)
+sorted_features &lt;- sort(feature_counts, decreasing = TRUE)
+
+print(paste(&quot;F1 Score:&quot;, f1_score))</code></pre>
+<pre><code>## [1] &quot;F1 Score: 0.999686296888294&quot;</code></pre>
+<pre class="r"><code>print(sorted_features)</code></pre>
+<pre><code>## 
+## Ozone_AQI_Category    Ozone_AQI_Value  PM25_AQI_Category     PM25_AQI_Value 
+##                  2                  2                  2                  2 
+##       CO_AQI_Value      NO2_AQI_Value 
+##                  1                  1</code></pre>
+<pre class="r"><code># mutual_information &lt;- infotheo::mutinformation(dataset$Air_Quality_Index_Category, dataset$PM25_AQI_Category)
+# mutual_information</code></pre>
+</div>
+<div id="tunning" class="section level3">
+<h3>Tunning</h3>
+</div>
+<div id="validation" class="section level3">
+<h3>Validation</h3>
+</div>
 </div>
 <div id="final-model" class="section level2">
 <h2>Final Model</h2>
-</div>
-<div id="conclusion" class="section level2">
-<h2>Conclusion</h2>
 </div>
 
 
