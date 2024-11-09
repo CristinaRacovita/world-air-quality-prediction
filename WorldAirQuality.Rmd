@@ -1,6 +1,6 @@
 ---
 title: "Air Quality Index Snapshot"
-author: "Cristina Racoviță"
+author: "Cristina Racoviță 3264440"
 output:
   html_document:
     toc: true
@@ -11,43 +11,38 @@ output:
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
+library(mice)
 library(readr)
 library(dplyr)
-library(ggplot2)
-library(mice)
-library(lmtest)
 library(knitr)
-library(tidyr)
 library(caret)
+library(rsample)
+library(ggplot2)
+library(infotheo)
 library(kableExtra)
 library(randomForestSRC)
-library(MASS)
-library(infotheo)
 ```
 
-<!-- I should describe the problem (regression vs classification) -->
-The data set called [World Air Quality Index by City and Coordinates](https://www.kaggle.com/datasets/adityaramachandran27/world-air-quality-index-by-city-and-coordinates/data) aims to provide valuable insights about the air quality of different regions. The goal of my project is <u>to classify</u> the air quality of a given city (*Good*, *Moderate*, etc.). This is predicted using the **country and city name, carbon monoxide, ozone, PM2.5 and nitrogen value**. The data set is described in the first section.
+The dataset called [World Air Quality Index by City and Coordinates](https://www.kaggle.com/datasets/adityaramachandran27/world-air-quality-index-by-city-and-coordinates/data) aims to provide valuable insights about the air quality of different regions. The goal of my project is <u>to classify</u> the air quality (*Good*, *Moderate*, etc.) using the **country and city name, carbon monoxide, ozone, PM2.5 and nitrogen value**.
 
 ## Motivation Behind Model Choice
 
-I chose a **Generalized Linear Model (GLM)** because it offers a good mix of simplicity and performance, making it ideal for this project. Since the target variable is the Air Quality Index Category, which is a classification problem, GLM is a natural fit. It helps understand how various pollutants, such as CO, Ozone, NO₂, and PM2.5, influence air quality in different regions.
-
-Additionally, with a dataset of around 16k rows, GLM handles the data efficiently without needing complex adjustments or tuning like other models. This ensures the analysis remains straightforward while delivering reliable and interpretable predictions.
+For my project on predicting Air Quality Index (AQI) categories, I chose **Random Forest** because it gives accurate results and is easy to interpret. Random Forest works by combining several decision trees to make predictions, which helps avoid overfitting. Since my dataset has a mix of continuous and categorical features, Random Forest handles this variety well, making it a good fit. Moreover, Random Forest shows which features are most important in making predictions. This allow me to discover which pollutants have the biggest impact on air quality.
 
 ## Data Analysis
-<!-- quality checks, check for outlines -->
-Firstly, the data set needs to be loaded from the **csv** file.
+
+Firstly, the dataset needs to be loaded from the **csv** file.
 
 ```{r load_dataset, message=FALSE, warning=FALSE, results='hide'}
-dataset <- read_delim(file = "./air-quality-countries.csv",
-                            delim = ",",
-                            col_names = TRUE)
+dataset <- readr::read_delim(file = "./air-quality-countries.csv",
+                             delim = ",",
+                             col_names = TRUE)
 ```
 
 ```{r head_dataset}
-kable(dataset[1:5,])
+kable(dataset[1:5, ])
 ```
-The data set has **`r ncol(dataset)`** columns and **`r nrow(dataset)`** rows. The features are `r colnames(dataset)`, and they are described as follows:  
+The dataset has **`r ncol(dataset)`** columns and **`r nrow(dataset)`** rows. The features are `r colnames(dataset)`, and they are described as follows:  
 
 - **`r colnames(dataset)[1]`**: Country Name
 - **`r colnames(dataset)[2]`**: City Name
@@ -74,29 +69,39 @@ dataset <- dataset %>%
   mutate(`PM2.5 AQI Category` = factor(`PM2.5 AQI Category`))
 
 categorical_variables <- dataset %>%
-                          dplyr::select(where(is.factor))
+  dplyr::select(where(is.factor))
 
 continuous_variables <- dataset %>%
-                          dplyr::select(where(is.double))
+  dplyr::select(where(is.double))
 ```
 
-Finally, there are `r ncol(continuous_variables)` continuous variables: `r names(continuous_variables)`, and `r ncol(categorical_variables)` categorical variables: `r names(categorical_variables)`.
+There are `r ncol(continuous_variables)` continuous variables: `r names(continuous_variables)`, and `r ncol(categorical_variables)` categorical variables: `r names(categorical_variables)`.
 
-Let’s take a closer look at our data to explore the number of countries, cities, and categories present in the dataset. Since the *AQI Category* is the target column, we will also focus on the percentage distribution of its classes. In addition, we can compute the minimum, maximum, median, mean and the standard deviation for each continuous feature.
+Let’s take a closer look at our data to explore the number of countries, cities, and categories present in the dataset. Since the *AQI Category* is the target column, I will also focus on the percentage distribution of its classes. In addition, I will compute the minimum, maximum, median, mean and the standard deviation for each continuous feature.
 
 ### Categorical Features
 
 ```{r analyse_categorical_data}
-distinct_values_list <- data.frame(Column = character(), Distinct_Values = character(), stringsAsFactors = FALSE)
+distinct_values_list <- data.frame(
+  Column = character(),
+  Distinct_Values = character(),
+  stringsAsFactors = FALSE
+)
 
 for (col in colnames(categorical_variables)) {
-  if(col == 'Country' || col == 'City') {
+  if (col == 'Country' || col == 'City') {
     next
   }
   
   distinct_values <- paste(levels(categorical_variables[[col]]), collapse = ", ")
-  distinct_values_list <- rbind(distinct_values_list, data.frame(Column = col,
-                                         Distinct_Values = distinct_values, stringsAsFactors = FALSE))
+  distinct_values_list <- rbind(
+    distinct_values_list,
+    data.frame(
+      Column = col,
+      Distinct_Values = distinct_values,
+      stringsAsFactors = FALSE
+    )
+  )
 }
 
 kable(distinct_values_list, caption = "Distinct Values for Each AQI Categorical Variable")
@@ -106,29 +111,50 @@ cities <- levels(dataset$City)
 
 most_common_country <- dataset %>%
   filter(!is.na(Country)) %>%
-  count(Country) %>%                     
-  arrange(desc(n)) %>%                   
-  slice(1) %>%                           
+  count(Country) %>%
+  arrange(desc(n)) %>%
+  slice(1) %>%
   mutate(percentage = round(n / sum(!is.na(dataset$Country)) * 100, 3))
 
 most_common_city <- dataset %>%
   filter(!is.na(City)) %>%
-  count(City) %>%                     
-  arrange(desc(n)) %>%                   
-  slice(1) %>%                           
+  count(City) %>%
+  arrange(desc(n)) %>%
+  slice(1) %>%
   mutate(percentage = round(n / sum(!is.na(dataset$City == City)) * 100, 3))
 
 aqi_percentage <- dataset %>%
-  count(`AQI Category`) %>%                               
-  mutate(percentage = round(n / sum(n) * 100, 3)) %>%     
+  count(`AQI Category`) %>%
+  mutate(percentage = round(n / sum(n) * 100, 3)) %>%
   arrange(desc(percentage))
 
 kable(aqi_percentage)
 ```
 
-The percentages for categories outside of *Good* and *Moderate* are significantly low, suggesting that it would be beneficial during the data cleaning process to combine these categories into a single one labeled *Bad*. In terms of the other categorical features, the data set includes information about `r length(countries)` countries and `r length(cities)` cities. The most frequently occurring country is the `r most_common_country['Country']`, which represents `r most_common_country['percentage']`% of the rows, while the most common city is `r most_common_city['City']`, accounting for `r most_common_city['percentage']`% of the rows.
+The percentages for categories outside of *Good* and *Moderate* are significantly low, suggesting that it would be beneficial during the data cleaning process to combine these categories into a single one labeled *Bad*. In terms of the other categorical features, the dataset includes information about `r length(countries)` countries and `r length(cities)` cities. The most frequently occurring country is the `r most_common_country['Country']`, which represents `r most_common_country['percentage']`% of the rows, while the most common city is `r most_common_city['City']`, accounting for `r most_common_city['percentage']`% of the rows.
 
-**Observations**: In the data cleaning phase, the city field should be removed due to its high degrees of freedom. With `r length(cities)` unique cities, we would need a minimum of `r (length(cities)-1)*15` rows to effectively train a model that could learn from this data—which we currently lack. Removing the city field does not result in any loss of detail, as we already have regional location information, including latitude and longitude.
+**Observations**: In the data cleaning phase, the city field should be removed due to its high degrees of freedom. With `r length(cities)` unique cities, I would need a minimum of `r (length(cities)-1)*15` rows to effectively train a model that could learn from this data — which I currently lack. Removing the city field does not result in any loss of detail, as the dataset already contains regional location information, including latitude and longitude.
+
+It is interesting to show the bounds for the categorical features, to display for each level of a feature what is its range of values.
+
+```{r display_bounds}
+show_bounds <- function(feature_name_value, feature_name_category) {
+  kable(dataset %>% select(!!rlang::sym(feature_name_value), !!rlang::sym(feature_name_category)) %>%
+    group_by(!!rlang::sym(feature_name_category)) %>%
+    summarise(
+      min_value = min(!!rlang::sym(feature_name_value)),
+      max_value = max(!!rlang::sym(feature_name_value))
+    ) %>%
+    mutate(range = paste(min_value, "to", max_value)) %>%
+    arrange(min_value) %>%
+    select(!!rlang::sym(feature_name_category), range))
+}
+
+show_bounds("PM2.5 AQI Value", "PM2.5 AQI Category")
+show_bounds("Ozone AQI Value", "Ozone AQI Category")
+show_bounds("CO AQI Value", "CO AQI Category")
+show_bounds("NO2 AQI Value", "NO2 AQI Category")
+```
 
 ### Continuous Features
 
@@ -151,16 +177,23 @@ kable(stats)
 **Observations**: The *PM2.5 AQI* Value has the highest mean, while the *CO AQI Value* and *NO2 AQI Value* has the lowest.
 
 ## Data Visualization
-<!-- data visualization, plots (correlation/ heat map) -->
 
-To simplify visualization, I group the four categories indicating poor air quality into a new category - **Bad**.
+To simplify visualization & increase performance, I grouped the four categories indicating poor air quality into a new category - **Bad**. This was done because these categories represent a very small percentage of the data.
+
 ``` {r group_data}
 dataset <- dataset %>%
-  mutate(`Air Quality Index Category` = case_when(
-    `AQI Category` %in% c("Unhealthy for Sensitive Groups", "Unhealthy", "Very Unhealthy", "Hazardous") ~ "Bad",
-    `AQI Category` == "Good" ~ "Good",
-    `AQI Category` == "Moderate" ~ "Moderate"
-  ))
+  mutate(
+    `Air Quality Index Category` = case_when(
+      `AQI Category` %in% c(
+        "Unhealthy for Sensitive Groups",
+        "Unhealthy",
+        "Very Unhealthy",
+        "Hazardous"
+      ) ~ "Bad",
+      `AQI Category` == "Good" ~ "Good",
+      `AQI Category` == "Moderate" ~ "Moderate"
+    )
+  )
 
 dataset <- dataset %>% mutate(`Air Quality Index Category` = factor(`Air Quality Index Category`))
 ```
@@ -170,7 +203,8 @@ To illustrate the distribution of categorical features, a bar plot is an excelle
 
 ```{r visualize_categorical_features}
 plot_categorical_feature <- function(feature_name) {
-  ggplot(data = dataset, aes(x = `Air Quality Index Category`, fill = !!rlang::sym(feature_name))) +
+  ggplot(data = dataset,
+         aes(x = `Air Quality Index Category`, fill = !!rlang::sym(feature_name))) +
     geom_bar(stat = "count",
              color = "black",
              position = position_dodge()) +
@@ -210,7 +244,11 @@ An important next step is to examine outliers - values that are outside of the r
 plot_continuous_feature <- function(feature_name) {
   ggplot(
     data = dataset,
-    aes(x = `Air Quality Index Category`, y = !!rlang::sym(feature_name), color = `Air Quality Index Category`)
+    aes(
+      x = `Air Quality Index Category`,
+      y = !!rlang::sym(feature_name),
+      color = `Air Quality Index Category`
+    )
     
   ) +
     geom_violin() + geom_boxplot(width = 0.1) +
@@ -255,7 +293,7 @@ plot_continuous_feature("Ozone AQI Value")
 Lastly, Ozone AQI values vary across categories. In "Poor Air Quality," the distribution skews high, indicating elevated Ozone levels, while "Good Air Quality" is narrower and focuses on lower levels. "Moderate Air Quality" falls between the two, with a broader range of values. Overlap between "Good" and "Moderate," as well as "Moderate" and "Poor," suggests instances where air quality may be categorized ambiguously based on specific Ozone values.
 
 ## Data Cleaning 
-<!--  missing data imputation -->
+
 It's time to ensure our data is clean for training the model. To achieve this, I will filter the variables as explained in the previous sections and check for any missing values, filling them in if necessary.
 
 ### Data Filtering
@@ -277,47 +315,55 @@ dataset <- dataset %>% dplyr::select(
   lng,
   `Air Quality Index Category`
 )
-kable(dataset[1:5,])
+kable(dataset[1:5, ], "html") %>% kable_styling("striped") %>% scroll_box(width = "100%")
 ```
 
 ### Missing Data Examination
 
 ``` {r get_missing_values}
 total_missing_dataset <- sum(is.na(dataset))
-missing_values <- as.data.frame(md.pattern(dataset, plot = FALSE))
+missing_values <- as.data.frame(mice::md.pattern(dataset, plot = FALSE))
 missing_values <- missing_values %>%
-  rename("total missing values" = "V13")
+  dplyr::rename("total missing values" = "V13")
 t(tail(missing_values, 1))
 ```
 
-Unfortunately, the dataset contains `r total_missing_dataset` missing values, so additional steps are required to complete the data. However, since the missing values are limited to the country feature, we can fill them in using the corresponding city values, eliminating the need for any imputation methods. Sadly, without a Google Maps API Key (which requires to fill in my banking information) I did not succeed to create a automatic method to fill the missing countries. That is why I chose to drop the rows that have missing values, their number being a negligible one. In addition, I renamed all the columns and eliminate spaces to make the modeling step more straight-forward.  
+Unfortunately, the dataset contains `r total_missing_dataset` missing values, so additional steps are required to complete the data. However, since the missing values are limited to the country feature, I can fill them in using the corresponding city values, eliminating the need for any imputation methods. Sadly, without a Google Maps API Key (which requires to fill in my banking information) I did not succeed to create a automatic method to fill the missing countries. That is why I chose to drop the rows that have missing values, their number being a negligible one. In addition, I renamed all the columns and eliminate spaces to make the modeling step more straight-forward. 
 
 ``` {r drop_countries}
 dataset <- dataset %>%
   filter(!is.na(Country))
 
 dataset <- dataset %>%
-  rename(CO_AQI_Value = `CO AQI Value`, 
-         CO_AQI_Category = `CO AQI Category`, 
-         Ozone_AQI_Value = `Ozone AQI Value`, 
-         Ozone_AQI_Category = `Ozone AQI Category`, 
-         NO2_AQI_Value = `NO2 AQI Value`, 
-         NO2_AQI_Category = `NO2 AQI Category`, 
-         PM25_AQI_Value = `PM2.5 AQI Value`, 
-         PM25_AQI_Category = `PM2.5 AQI Category`, 
-         Air_Quality_Index_Category = `Air Quality Index Category`)
+  rename(
+    CO_AQI_Value = `CO AQI Value`,
+    CO_AQI_Category = `CO AQI Category`,
+    Ozone_AQI_Value = `Ozone AQI Value`,
+    Ozone_AQI_Category = `Ozone AQI Category`,
+    NO2_AQI_Value = `NO2 AQI Value`,
+    NO2_AQI_Category = `NO2 AQI Category`,
+    PM25_AQI_Value = `PM2.5 AQI Value`,
+    PM25_AQI_Category = `PM2.5 AQI Category`,
+    Air_Quality_Index_Category = `Air Quality Index Category`
+  )
 
-dataset[1:5,]
+kable(dataset[1:5, ], "html") %>% kable_styling("striped") %>% scroll_box(width = "100%")
 ```
 
 ## Modeling 
-<!-- training, testing, optimization, validation -->
+
 ### Feature Selection
 
-```{r build_stepwise_model}
+Then, the feature selection is performed using the Random Forest model and cross validation. First, I split the dataset into 10 folds using cross-validation, ensuring that each fold contained a portion of the data for testing while the rest was used for training. For each fold, I trained a Random Forest model to predict the AQI category and calculated feature importance scores. Features with importance scores above the average were selected for further use. 
+
+After selecting the most important features for each fold, I updated the list of frequently selected features across all folds. I used these features to retrain the model and make predictions on the test set, calculating precision and recall for each fold. Finally, I computed the overall F1 score to measure the model's performance and identified the most important features based on their selection frequency. The final dataset was then filtered to include only the most important features along with the AQI category for further analysis.
+
+**Observation:** I chose F1 score because my dataset is unbalanced, and I needed a metric that is computed by class. The final F1 score is the mean of the F1 value of each class. 
+
+```{r select_features}
 set.seed(194)
 
-folds <- createFolds(dataset$Air_Quality_Index_Category, k = 10)
+folds <- caret::createFolds(dataset$Air_Quality_Index_Category, k = 10)
 
 precisions <- c()
 recalls <- c()
@@ -326,7 +372,13 @@ feature_counts <- table(character())
 for (fold_index in 1:length(folds)) {
   test_fold <- as.data.frame(dataset[folds[[fold_index]], ])
   train_fold <- as.data.frame(dataset[-folds[[fold_index]], ])
-  rf_model <-  rfsrc(Air_Quality_Index_Category ~ ., data = train_fold, importance = TRUE, ntree = 1)
+  rf_model <-  randomForestSRC::rfsrc(
+    Air_Quality_Index_Category ~ .,
+    data = train_fold,
+    importance = TRUE,
+    ntree = 1,
+    imbalanced = TRUE
+  )
   
   importance_scores <- rf_model$importance[, "all"]
   mean_importance <- mean(importance_scores)
@@ -337,34 +389,169 @@ for (fold_index in 1:length(folds)) {
   
   selected_features_string = paste(selected_features, collapse = "+")
   formula = as.formula(paste("Air_Quality_Index_Category ~", selected_features_string))
-  final_rf_model <- rfsrc(formula, data = train_fold, ntree = 1)
+  final_rf_model <- randomForestSRC::rfsrc(formula,
+                                           data = train_fold,
+                                           ntree = 1,
+                                           imbalanced = TRUE)
   
   predictions = predict(final_rf_model, test_fold)
-  confusion_matrix <- confusionMatrix(factor(predictions$class), factor(test_fold$Air_Quality_Index_Category))
-  precisions <- append(precisions, confusion_matrix$byClass[,"Pos Pred Value"])
-  recalls <- append(recalls, confusion_matrix$byClass[,"Sensitivity"])
+  confusion_matrix <- confusionMatrix(factor(predictions$class),
+                                      factor(test_fold$Air_Quality_Index_Category))
+  precisions <- append(precisions, confusion_matrix$byClass[, "Pos Pred Value"])
+  recalls <- append(recalls, confusion_matrix$byClass[, "Sensitivity"])
 }
 
 mean_precision <- mean(precisions, na.rm = TRUE)
 mean_recall <- mean(recalls, na.rm = TRUE)
-f1_score <- 2 * (mean_precision * mean_recall) / (mean_precision + mean_recall)
+mean_f1_score <- 2 * (mean_precision * mean_recall) / (mean_precision + mean_recall)
 sorted_features <- sort(feature_counts, decreasing = TRUE)
 
-print(paste("F1 Score:", f1_score))
-print(sorted_features)
+print(paste("F1 Score:", mean_f1_score))
 
-# mutual_information <- infotheo::mutinformation(dataset$Air_Quality_Index_Category, dataset$PM25_AQI_Category)
-# mutual_information
+selected_features = as.vector(as.data.frame(sorted_features)[["Var1"]])
+formula <- as.formula(paste(
+  "Air_Quality_Index_Category ~",
+  paste(selected_features, collapse = " + ")
+))
+print(selected_features)
 ```
-### Tunning
 
-```{r tunning}
+### Tuning
 
+Next, I found the optimal `mtry` (the number of variables randomly selected at each split) for my selected features and dataset. This is done on the whole dataset. I tested values from 2 to `r length(selected_features)` (the number of selected features). Moreover, I displayed the F1 score for each selected `mtry` value.
+
+```{r tuning}
+f1 <- function(data, lev = NULL, model = NULL) {
+  f1_val <- f1_score(data$pred, data$obs)
+  names(f1_val) <- c("F1")
+  f1_val
+}
+
+f1_score <- function(predicted, expected) {
+  predicted <- factor(as.character(predicted), levels = unique(as.character(expected)))
+  expected  <- as.factor(expected)
+  
+  cm = as.matrix(table(expected, predicted))
+  cm <- cm[order(rownames(cm)), order(colnames(cm))]
+  precision <- diag(cm) / colSums(cm)
+  recall <- diag(cm) / rowSums(cm)
+  f1 <-  ifelse(precision + recall == 0,
+                0,
+                (2 * precision * recall) / (precision + recall))
+  f1[is.na(f1)] <- 0
+  
+  mean(f1)
+}
+
+mtry_values <- c(2:length(selected_features))
+optimization_control <- trainControl(
+  method = 'cv',
+  number = 5,
+  summaryFunction = f1,
+  classProbs = TRUE
+)
+
+tuned_rf <- caret::train(
+  formula,
+  data = dataset,
+  method = 'rf',
+  metric = "F1",
+  tuneGrid = expand.grid(.mtry = mtry_values),
+  trControl = optimization_control
+)
+optimal_mtry <- tuned_rf$finalModel$mtry
+
+kable(tuned_rf$results %>% dplyr::select(c(mtry, F1)))
+paste("The optimal m is", optimal_mtry)
 ```
 
 ### Validation
 
+<u>**Train/Test Validation**</u>
 
+Next, with the optimal number of variables randomly selected at each split, I can train the tuned random forest model on the training dataset (80%) and validate it using the test dataset (20%).
+
+```{r train_rf_model, warning=FALSE}
+dataset_splitter_rf <- initial_split(dataset, prop = 0.8, strata = Air_Quality_Index_Category)
+train_dataset_rf <- as.data.frame(training(dataset_splitter_rf))
+test_dataset_rf <- as.data.frame(testing(dataset_splitter_rf))
+
+tuned_rf_model <- rfsrc(formula, data = train_dataset_rf, mtry = optimal_mtry)
+predictions <- predict(tuned_rf_model, newdata = test_dataset_rf, importance = TRUE)
+
+confusion_matrix <- confusionMatrix(factor(predictions$class),
+                                    factor(test_dataset_rf$Air_Quality_Index_Category))
+precision <- confusion_matrix$byClass[, "Pos Pred Value"]
+recall <- confusion_matrix$byClass[, "Sensitivity"]
+
+mean_precision <- mean(precision, na.rm = TRUE)
+mean_recall <- mean(recall, na.rm = TRUE)
+validation_model_f1_score <- 2 * (mean_precision * mean_recall) / (mean_precision + mean_recall)
+cat_mutual_information <- infotheo::mutinformation(dataset$Air_Quality_Index_Category,
+                                                   dataset$PM25_AQI_Category)
+value_mutual_information <- infotheo::mutinformation(dataset$Air_Quality_Index_Category, dataset$PM25_AQI_Value)
+
+print(paste("Validation F1 Score:", validation_model_f1_score))
+```
+**Observations**:  The F1 score might appear higher than expected, but this is likely due to the strong correlation between the target column and the `PM2.5` features After computing the mutual information, I found that it is approximately `r cat_mutual_information` for *PM25_AQI_Category* and `r value_mutual_information` for *PM25_AQI_Value*, indicating a significant relationship between these variables. This strong association can justify the large F1 score.
+
+<u>**Cross Validation**</u>
+
+A second method to validate my model is cross validation. I set the fold number to be 100, and after applying cross validation, I computed the confidence intervals taking the 0.025 and 0.975 quantiles. 
+
+```{r cross_validation}
+control <- caret::trainControl(
+  method = "cv",
+  number = 100,
+  summaryFunction = f1,
+  classProbs = TRUE
+)
+
+model <- caret::train(
+  formula,
+  data = dataset,
+  method = 'rf',
+  metric = "F1",
+  tuneGrid = expand.grid(.mtry = c(optimal_mtry)),
+  trControl = optimization_control
+)
+
+
+avg_F1 <- mean(model$resample$F1)
+lower_bound <- quantile(model$resample$F1, 0.025)
+upper_bound <- quantile(model$resample$F1, 0.975)
+print(
+  paste(
+    "Random Forest",
+    "95% conficence intervals:",
+    lower_bound,
+    ", ",
+    avg_F1,
+    ", ",
+    upper_bound
+  ),
+)
+```
 
 ## Final Model
 
+Finally, I trained the final model, with the best selected features, the optimal `mtry` value, and using the whole dataset. There can be seen that the most important feature in predicting air quality categories is `PM25_AQI_Category`, followed by `Ozone_AQI_Category`, and `PM25_AQI_Value`. The least significant features are `No2_AQI_Value` and `CO_AQI_Value`.
+
+``` {r rf_final_model, warning=FALSE}
+final_rf_model = rfsrc(
+  formula,
+  data = as.data.frame(dataset),
+  mtry = optimal_mtry,
+  importance = TRUE
+)
+
+feature_importance_df <- as.data.frame(final_rf_model$importance)
+feature_importance_all <- data.frame("feature" = rownames(feature_importance_df),
+                                     "all" = feature_importance_df$all) %>% arrange(desc(all))
+
+ggplot(feature_importance_all, aes(x = feature, y = all)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Random Forest Overall Feature Importance", x = "Feature", y = "Importance") +
+  theme_minimal() +
+  coord_flip()
+```
