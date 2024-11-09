@@ -23,7 +23,7 @@ library(kableExtra)
 library(randomForestSRC)
 ```
 
-The dataset called [World Air Quality Index by City and Coordinates](https://www.kaggle.com/datasets/adityaramachandran27/world-air-quality-index-by-city-and-coordinates/data) aims to provide valuable insights about the air quality of different regions. The goal of my project is <u>to classify</u> the air quality (*Good*, *Moderate*, etc.) using the **country and city name, carbon monoxide, ozone, PM2.5 and nitrogen value**.
+The dataset called [World Air Quality Index by City and Coordinates](https://www.kaggle.com/datasets/adityaramachandran27/world-air-quality-index-by-city-and-coordinates/data) aims to provide valuable insights about the air quality of different regions. The goal of my project is <u>to classify</u> the air quality (*Good*, *Moderate*, etc.) using the **country and city name, carbon monoxide, ozone, PM2.5 and nitrogen value**. All findings can be found at [My Shiny App - AQI Explorer](https://cristinaracovita.shinyapps.io/air-quality-index-app/).
 
 ## Motivation Behind Model Choice
 
@@ -555,3 +555,7 @@ ggplot(feature_importance_all, aes(x = feature, y = all)) +
   theme_minimal() +
   coord_flip()
 ```
+
+## Conclusion
+
+In conclusion, I’ve identified the key features that drive air quality predictions. Given the simplicity of my dataset, the model performs exceptionally well, with an almost perfect F1 score. Looking ahead, there’s potential for improvement by removing the outlines from the data and expanding the dataset to include more information. This could open up opportunities to explore correlations between location and air quality.
