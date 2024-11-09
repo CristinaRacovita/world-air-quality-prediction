@@ -1,0 +1,39 @@
+body {
+	background-color: #fff;  
+}
+
+.navbar-default {
+	background-color: #c9e7f5;
+	border-radius: 0 0 10px 10px;
+	color: #124861;
+}
+
+.navbar-default .navbar-nav > li > a {
+	color: #124861 !important;
+	font-size: 16px;
+}
+
+.navbar-default .navbar-nav > .active > a, .navbar-default .navbar-nav > .active > a:focus, .navbar-default .navbar-nav > .active > a:hover {
+	background-color: #b4ddf1;
+	font-weight: bold;
+}
+
+.navbar-default .navbar-brand {
+	color: #ffff;
+	font-size: 20px;
+	font-weight: bold;
+}
+
+h2 {
+	color: #2F4F4F;  
+}
+
+.image {
+	width: 40px;
+	margin-top: 5px;
+	float: right;
+}
+
+.navbar-default .navbar-brand:focus, .navbar-default .navbar-brand:hover {
+	color: #124861 !important;
+}

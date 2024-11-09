@@ -1,0 +1,12 @@
+name: air-quality-index-app
+title: air-quality-index-app
+username: cristinaracovita
+account: cristinaracovita
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 13244302
+bundleId: 9338224
+url: https://cristinaracovita.shinyapps.io/air-quality-index-app/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE
